@@ -19,7 +19,7 @@
 
   <div id="loading" class="loading">
     <div class="spinner"></div>
-    <p>Lade Putzplan…</p>
+    <p>Verbinde mit Firebase…</p>
   </div>
 
   <div id="app" class="hidden">
@@ -70,10 +70,13 @@
     </main>
 
     <footer>
-      <p>Aktualisiert sich automatisch je nach Kalenderwoche · Sync alle paar Sekunden</p>
+      <p>Aktualisiert sich automatisch je nach Kalenderwoche · Echtzeit-Sync via Firebase</p>
     </footer>
   </div>
 
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

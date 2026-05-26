@@ -29,137 +29,92 @@ const TASKS = {
 
 const PEOPLE = ['Julian', 'David'];
 
-// ─── Backend: jsonblob.com (anonym, kein Account nötig) ───────────
-const API_BASE = 'https://jsonblob.com/api/jsonBlob';
-
-async function createBlob() {
-  const resp = await fetch(API_BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify({ turns: {}, done: {}, history: {} })
-  });
-  if (!resp.ok) throw new Error('Anlegen fehlgeschlagen (' + resp.status + ')');
-  const id = resp.headers.get('X-jsonblob-id') || resp.headers.get('Location')?.split('/').pop();
-  if (!id) throw new Error('Blob-ID konnte nicht gelesen werden');
-  return id;
-}
-
-async function fetchBlob(id) {
-  const resp = await fetch(`${API_BASE}/${id}`, {
-    headers: { 'Accept': 'application/json' },
-    cache: 'no-store'
-  });
-  if (!resp.ok) throw new Error('Laden fehlgeschlagen (' + resp.status + ')');
-  return resp.json();
-}
-
-async function saveBlob(id, data) {
-  const resp = await fetch(`${API_BASE}/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-    body: JSON.stringify(data)
-  });
-  if (!resp.ok) throw new Error('Speichern fehlgeschlagen (' + resp.status + ')');
-}
-
 // ─── Setup-Error UI ───────────────────────────────────────────────
-function showSetupError(message) {
+function showSetupError(htmlMessage) {
   document.getElementById('loading').classList.add('hidden');
+  document.getElementById('app').classList.add('hidden');
   const el = document.getElementById('setup-error');
   el.innerHTML = `
     <div class="setup-box">
-      <h1>⚠️ Verbindungsproblem</h1>
-      <p>${message}</p>
-      <p>Lad die Seite neu, evtl. ist gerade kein Internet.</p>
-      <button onclick="location.reload()" class="reload-btn">Neu laden</button>
+      <h1>🔧 Firebase-Setup nötig</h1>
+      ${htmlMessage}
+      <button onclick="location.reload()" class="reload-btn">Seite neu laden</button>
     </div>`;
   el.classList.remove('hidden');
 }
 
-// ─── Room ID aus URL ──────────────────────────────────────────────
-async function getOrCreateRoomId() {
-  const match = window.location.hash.match(/room=([a-zA-Z0-9_-]+)/);
-  if (match) return { id: match[1], isNew: false };
-  const id = await createBlob();
-  window.history.replaceState(null, '', '#room=' + id);
-  return { id, isNew: true };
+// ─── Config-Check ─────────────────────────────────────────────────
+if (typeof firebaseConfig === 'undefined' || firebaseConfig.apiKey === 'PASTE_YOUR_API_KEY_HERE') {
+  showSetupError(`
+    <p>Trag deine Firebase-Daten in <code>firebase-config.js</code> ein.</p>
+    <p style="font-size:13px;color:var(--text-muted);margin-top:12px">
+      Anleitung in der Datei. Dauert ~5 Min:
+      Google-Login → Projekt anlegen → Realtime Database aktivieren →
+      Config kopieren → in firebase-config.js einfügen → push.
+    </p>`);
+  throw new Error('Firebase not configured');
 }
+
+// ─── Firebase Init ────────────────────────────────────────────────
+try {
+  firebase.initializeApp(firebaseConfig);
+} catch (e) {
+  showSetupError(`<p>Firebase-Init fehlgeschlagen:</p><p><code>${e.message}</code></p>`);
+  throw e;
+}
+const db = firebase.database();
+
+// ─── Room ID aus URL ──────────────────────────────────────────────
+let isNewRoom = false;
+function generateRoomId() {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const arr = new Uint8Array(24);
+  crypto.getRandomValues(arr);
+  let id = '';
+  for (const b of arr) id += chars[b % chars.length];
+  return id;
+}
+function getOrCreateRoomId() {
+  const match = window.location.hash.match(/room=([a-zA-Z0-9_-]{16,})/);
+  if (match) return match[1];
+  const id = generateRoomId();
+  window.history.replaceState(null, '', '#room=' + id);
+  isNewRoom = true;
+  return id;
+}
+
+const roomId = getOrCreateRoomId();
+const roomRef = db.ref(`rooms/${roomId}`);
 
 // ─── State ────────────────────────────────────────────────────────
 let state = { turns: {}, done: {}, history: {} };
-let roomId = null;
-let isPolling = false;
-let pendingWrite = false;
-let lastSyncedAt = null;
+let firstSync = true;
 
-function normalizeState(raw) {
-  return {
-    turns: (raw && raw.turns) || {},
-    done: (raw && raw.done) || {},
-    history: (raw && raw.history) || {},
+roomRef.on('value', (snap) => {
+  const val = snap.val() || {};
+  state = {
+    turns:   val.turns   || {},
+    done:    val.done    || {},
+    history: val.history || {},
   };
-}
+  setSyncStatus('online');
 
-async function init() {
-  try {
-    const { id, isNew } = await getOrCreateRoomId();
-    roomId = id;
-
-    state = normalizeState(await fetchBlob(roomId));
-    lastSyncedAt = Date.now();
-
+  if (firstSync) {
     document.getElementById('loading').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
-    setSyncStatus('online');
-
-    if (isNew) showShareBanner();
-    render();
-
-    setInterval(pollUpdates, 3000);
-    setInterval(render, 60_000);
-  } catch (e) {
-    showSetupError(e.message);
+    if (isNewRoom || !snap.exists()) showShareBanner();
+    firstSync = false;
   }
-}
-
-async function pollUpdates() {
-  if (isPolling || pendingWrite) return;
-  isPolling = true;
-  try {
-    const latest = normalizeState(await fetchBlob(roomId));
-    const a = JSON.stringify(state);
-    const b = JSON.stringify(latest);
-    if (a !== b) {
-      state = latest;
-      render();
-    }
-    lastSyncedAt = Date.now();
-    setSyncStatus('online');
-  } catch (e) {
-    setSyncStatus('offline');
-  } finally {
-    isPolling = false;
-  }
-}
-
-async function updateState(updateFn) {
-  pendingWrite = true;
-  setSyncStatus('saving');
-  try {
-    const latest = normalizeState(await fetchBlob(roomId));
-    state = latest;
-    updateFn(state);
-    await saveBlob(roomId, state);
-    lastSyncedAt = Date.now();
-    setSyncStatus('online');
-    render();
-  } catch (e) {
-    setSyncStatus('error');
-    alert('Speichern fehlgeschlagen: ' + e.message);
-  } finally {
-    pendingWrite = false;
-  }
-}
+  render();
+}, (err) => {
+  showSetupError(`
+    <p>Datenbank-Zugriff fehlgeschlagen:</p>
+    <p><code>${err.message}</code></p>
+    <p style="font-size:13px;color:var(--text-muted);margin-top:12px">
+      Wahrscheinlich fehlen die Realtime-Database-Regeln (Schritt 5
+      der Anleitung in <code>firebase-config.js</code>).
+    </p>`);
+});
 
 function setSyncStatus(status) {
   const el = document.getElementById('sync-indicator');
@@ -167,8 +122,8 @@ function setSyncStatus(status) {
   switch (status) {
     case 'online':  el.textContent = '● Live synchronisiert'; el.classList.add('connected'); break;
     case 'saving':  el.textContent = '⟳ Speichere…';         el.classList.add('saving-state'); break;
-    case 'offline': el.textContent = '⚠ Offline (versuche erneut)'; el.classList.add('offline-state'); break;
-    case 'error':   el.textContent = '⚠ Fehler beim Speichern'; el.classList.add('error-state'); break;
+    case 'offline': el.textContent = '⚠ Offline';            el.classList.add('offline-state'); break;
+    case 'error':   el.textContent = '⚠ Fehler';             el.classList.add('error-state'); break;
   }
 }
 
@@ -201,27 +156,26 @@ function isDone(taskId, periodKey) {
 
 // ─── Actions ──────────────────────────────────────────────────────
 function clickRotating(taskId) {
-  updateState(s => {
-    const task = TASKS.rotating.find(t => t.id === taskId);
-    const current = s.turns[taskId] || 'Julian';
-    s.turns[taskId] = current === 'Julian' ? 'David' : 'Julian';
-    const k = Date.now() + '_' + Math.random().toString(36).substring(2, 8);
-    s.history[k] = { task: task.name, by: current, ts: new Date().toISOString() };
-    // Trim auf max 30
-    const keys = Object.keys(s.history).sort();
-    if (keys.length > 30) keys.slice(0, keys.length - 30).forEach(k => delete s.history[k]);
+  const task = TASKS.rotating.find(t => t.id === taskId);
+  const current = getTurn(taskId);
+  const next = current === 'Julian' ? 'David' : 'Julian';
+  roomRef.child(`turns/${taskId}`).set(next);
+  const histKey = Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+  roomRef.child(`history/${histKey}`).set({ task: task.name, by: current, ts: new Date().toISOString() });
+  // Trim auf max 30
+  roomRef.child('history').once('value', s => {
+    const all = s.val() || {};
+    const keys = Object.keys(all).sort();
+    if (keys.length > 30) keys.slice(0, keys.length - 30).forEach(k => roomRef.child(`history/${k}`).remove());
   });
 }
 function toggleScheduled(taskId, periodKey) {
-  updateState(s => {
-    const key = `${periodKey}_${taskId}`;
-    if (s.done[key]) delete s.done[key];
-    else s.done[key] = true;
-  });
+  const key = `${periodKey}_${taskId}`;
+  roomRef.child(`done/${key}`).set(isDone(taskId, periodKey) ? null : true);
 }
 function resetAll() {
   if (!confirm('Wirklich alles zurücksetzen? (Wer-ist-dran + Erledigt-Häkchen + Verlauf)')) return;
-  updateState(s => { s.turns = {}; s.done = {}; s.history = {}; });
+  roomRef.set({ turns: {}, done: {}, history: {} });
 }
 
 // ─── Share Banner ─────────────────────────────────────────────────
@@ -258,7 +212,6 @@ function render() {
     rotDiv.appendChild(card);
   });
 
-  // Weekly + Biweekly
   const cols = { Julian: [], David: [] };
   const weekKey = `w${weekYear}-${week}`;
   TASKS.weekly.forEach(task => {
@@ -276,7 +229,6 @@ function render() {
 
   const monthPeriod = year * 12 + month;
   renderAssignedList('monthly-tasks', TASKS.monthly, monthPeriod, `m${monthPeriod}`);
-
   const quarterPeriod = year * 4 + quarter;
   renderAssignedList('quarterly-tasks', TASKS.quarterly, quarterPeriod, `q${quarterPeriod}`);
 
@@ -302,7 +254,6 @@ function renderTaskCol(elId, tasks) {
     el.appendChild(li);
   });
 }
-
 function renderAssignedList(elId, taskList, periodNum, periodKey) {
   const el = document.getElementById(elId);
   el.innerHTML = '';
@@ -319,7 +270,6 @@ function renderAssignedList(elId, taskList, periodNum, periodKey) {
     el.appendChild(li);
   });
 }
-
 function renderHistory() {
   const el = document.getElementById('history-content');
   const entries = Object.values(state.history || {})
@@ -349,5 +299,5 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('share-banner').classList.add('hidden');
   });
   document.getElementById('reset-btn').addEventListener('click', resetAll);
-  init();
+  setInterval(render, 60_000);
 });
