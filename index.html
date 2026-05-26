@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1f2937">
+  <title>Putzplan · Julian & David</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="share-banner" class="share-banner hidden">
+    <span>🔗 <strong>Neuer Putzplan erstellt.</strong> Diesen Link mit David teilen – nur damit sieht man die Daten:</span>
+    <input type="text" id="share-url" readonly>
+    <button id="copy-btn">Kopieren</button>
+    <button id="dismiss-btn" title="Schließen">×</button>
+  </div>
+
+  <div id="setup-error" class="setup-error hidden"></div>
+
+  <div id="loading" class="loading">
+    <div class="spinner"></div>
+    <p>Lade Putzplan…</p>
+  </div>
+
+  <div id="app" class="hidden">
+    <header>
+      <h1>Putzplan</h1>
+      <div id="week-display" class="subtitle"></div>
+      <div id="sync-indicator" class="sync-indicator">Verbinde…</div>
+    </header>
+
+    <main>
+      <section class="rotating-section">
+        <h2>Wer ist dran?</h2>
+        <div id="rotating-tasks" class="rotating-grid"></div>
+        <p class="hint">Klick auf „Erledigt" wenn du's gemacht hast – das nächste Mal ist der andere dran.</p>
+      </section>
+
+      <section class="weekly-section">
+        <h2>Diese Woche</h2>
+        <div class="person-columns">
+          <div class="person julian-col">
+            <h3>Julian</h3>
+            <ul id="julian-tasks"></ul>
+          </div>
+          <div class="person david-col">
+            <h3>David</h3>
+            <ul id="david-tasks"></ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="monthly-section">
+        <h2>Diesen Monat</h2>
+        <ul id="monthly-tasks" class="task-list"></ul>
+      </section>
+
+      <section class="quarterly-section">
+        <h2>Dieses Quartal</h2>
+        <ul id="quarterly-tasks" class="task-list"></ul>
+      </section>
+
+      <section class="history-section">
+        <details>
+          <summary>Verlauf (letzte Klicks)</summary>
+          <div id="history-content"></div>
+          <button id="reset-btn" class="reset-btn">Alles zurücksetzen</button>
+        </details>
+      </section>
+    </main>
+
+    <footer>
+      <p>Aktualisiert sich automatisch je nach Kalenderwoche · Sync alle paar Sekunden</p>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
